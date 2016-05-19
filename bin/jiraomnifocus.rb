@@ -29,7 +29,7 @@ EOS
   end
 
   return Trollop::options do
-    banner ""
+    banner ''
     banner <<-EOS
 Jira OmniFocus Sync Tool
 
@@ -57,12 +57,13 @@ end
 # This method gets all issues that are assigned to your USERNAME and whos status isn't Closed or Resolved.  It returns a Hash where the key is the Jira Ticket Key and the value is the Jira Ticket Summary.
 def get_issues
   jira_issues = Hash.new
+
   # This is the REST URL that will be hit.  Change the jql query if you want to adjust the query used here
   uri = URI($opts[:hostname] + '/rest/api/2/search?jql=' + URI::encode($opts[:filter]))
 
   if $opts[:usekeychain]
-    keychainUri = URI($opts[:hostname])
-    host = keychainUri.host
+    keychain_uri = URI($opts[:hostname])
+    host = keychain_uri.host
     if keychainitem = Keychain.internet_passwords.where(:server => host).first
     	$opts[:username] = keychainitem.account
     	$opts[:password] = keychainitem.password
@@ -79,12 +80,12 @@ def get_issues
     if response.code =~ /20[0-9]{1}/
         puts "Connected successfully to " + uri.hostname
         data = JSON.parse(response.body)
-        data["issues"].each do |item|
-          jira_id = item["key"]
+        data['issues'].each do |item|
+          jira_id = item['key']
           jira_issues[jira_id] = item
         end
     else
-     raise StandardError, "Unsuccessful HTTP response code " + response.code + " from " + uri.hostname
+     raise StandardError, 'Unsuccessful HTTP response code ' + response.code + ' from ' + uri.hostname
     end
   end
   return jira_issues
@@ -94,21 +95,21 @@ end
 def add_task(omnifocus_document, new_task_properties)
   # If there is a passed in OF project name, get the actual project object
   if new_task_properties['project']
-    proj_name = new_task_properties["project"]
+    proj_name = new_task_properties['project']
     proj = omnifocus_document.flattened_tasks[proj_name]
   end
 
   # Check to see if there's already an OF Task with that name in the referenced Project
   # If there is, just stop.
-   name   = new_task_properties["name"]
-   #exists = proj.tasks.get.find { |t| t.name.get.force_encoding("UTF-8") == name }
-   # You can un-comment the line below and comment the line above if you want to search your entire OF document, instead of a specific project.
-   exists = omnifocus_document.flattened_tasks.get.find { |t| t.name.get.force_encoding("UTF-8") == name }
-   return false if exists
+  name   = new_task_properties['name']
+  #exists = proj.tasks.get.find { |t| t.name.get.force_encoding("UTF-8") == name }
+  # You can un-comment the line below and comment the line above if you want to search your entire OF document, instead of a specific project.
+  exists = omnifocus_document.flattened_tasks.get.find { |t| t.name.get.force_encoding('UTF-8') == name }
+  return false if exists
 
   # If there is a passed in OF context name, get the actual context object
   if new_task_properties['context']
-    ctx_name = new_task_properties["context"]
+    ctx_name = new_task_properties['context']
     ctx = omnifocus_document.flattened_contexts[ctx_name]
   end
 
@@ -124,7 +125,7 @@ def add_task(omnifocus_document, new_task_properties)
   tprops[:context] = ctx if new_task_properties['context']
 
   # You can uncomment this line and comment the one below if you want the tasks to end up in your Inbox instead of a specific Project
-#  new_task = omnifocus_document.make(:new => :inbox_task, :with_properties => tprops)
+  # new_task = omnifocus_document.make(:new => :inbox_task, :with_properties => tprops)
 
   # Make a new Task in the Project
   proj.make(:new => :task, :with_properties => tprops)
@@ -138,14 +139,14 @@ def add_jira_tickets_to_omnifocus (omnifocus_document)
   # Get the open Jira issues assigned to you
   results = get_issues
   if results.nil?
-    puts "No results from Jira"
+    puts 'No results from Jira'
     exit
   end
 
   # Iterate through resulting issues.
   results.each do |jira_id, ticket|
     # Create the task name by adding the ticket summary to the jira ticket key
-    task_name = "#{jira_id}: #{ticket["fields"]["summary"]}"
+    task_name = "#{jira_id}: #{ticket['fields']['summary']}"
     # Create the task notes with the Jira Ticket URL
     task_notes = "#{$opts[:hostname]}/browse/#{jira_id}"
 
@@ -156,8 +157,12 @@ def add_jira_tickets_to_omnifocus (omnifocus_document)
     @props['context'] = $opts[:context]
     @props['note'] = task_notes
     @props['flagged'] = $opts[:flag]
-    unless ticket["fields"]["duedate"].nil?
-      @props["due_date"] = Date.parse(ticket["fields"]["duedate"])
+    unless ticket['fields']['duedate'].nil?
+      @props['due_date'] = Date.parse(ticket['fields']['duedate'])
+    end
+    @props['creation_date'] = Date.parse(ticket['fields']['created'])
+    unless ticket['fields']['updated'].nil?
+      @props['modification_date'] = Date.parse(ticket['fields']['updated'])
     end
     add_task(omnifocus_document, @props)
   end
@@ -182,12 +187,13 @@ def mark_resolved_jira_tickets_as_complete_in_omnifocus (omnifocus_document)
         if response.code =~ /20[0-9]{1}/
             data = JSON.parse(response.body)
             # Check to see if the Jira ticket has been resolved, if so mark it as complete.
-            resolution = data["fields"]["resolution"]
+            resolution = data['fields']['resolution']
             if resolution != nil
               # if resolved, mark it as complete in OmniFocus
-              if task.completed.get != true
+              unless task.completed.get
                 task.completed.set(true)
-                puts "Marked task completed " + jira_id
+                puts 'Marked task completed ' + jira_id
+                next
               end
             end
             # Check to see if the Jira ticket has been unassigned or assigned to someone else, if so delete it.
@@ -201,7 +207,7 @@ def mark_resolved_jira_tickets_as_complete_in_omnifocus (omnifocus_document)
               end
             end
         else
-         raise StandardError, "Unsuccessful response code " + response.code + " for issue " + issue
+         raise StandardError, 'Unsuccessful response code ' + response.code + ' for issue ' + issue
         end
       end
     end
@@ -213,23 +219,23 @@ def app_is_running(app_name)
 end
 
 def get_omnifocus_document
-  return Appscript.app.by_name("OmniFocus").default_document
+  return Appscript.app.by_name('OmniFocus').default_document
 end
 
 def check_options()
   if $opts[:hostname] == 'http://please-configure-me-in-jofsync.yaml.atlassian.net'
-    raise StandardError, "The hostname is not set. Did you create ~/.jofsync.yaml?"
+    raise StandardError, 'The hostname is not set. Did you create ~/.jofsync.yaml?'
   end
 end
 
 def main ()
-   if app_is_running("OmniFocus")
-     $opts = get_opts
-     check_options()
-     omnifocus_document = get_omnifocus_document
-	   add_jira_tickets_to_omnifocus(omnifocus_document)
-	   mark_resolved_jira_tickets_as_complete_in_omnifocus(omnifocus_document)
-   end
+  if app_is_running('OmniFocus')
+    $opts = get_opts
+    check_options
+    omnifocus_document = get_omnifocus_document
+    add_jira_tickets_to_omnifocus(omnifocus_document)
+    mark_resolved_jira_tickets_as_complete_in_omnifocus(omnifocus_document)
+  end
 end
 
 main
