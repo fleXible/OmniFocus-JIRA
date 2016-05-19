@@ -196,14 +196,25 @@ def mark_resolved_jira_tickets_as_complete_in_omnifocus (omnifocus_document)
                 next
               end
             end
-            # Check to see if the Jira ticket has been unassigned or assigned to someone else, if so delete it.
-            # It will be re-created if it is assigned back to you.
-            if ! data["fields"]["assignee"]
+            # Check if Jira ticket has been created by current user, then keep it for monitoring.
+            # If not created by us, do further checking
+            if ! data['fields']['reporter']
               omnifocus_document.delete task
             else
-              assignee = data["fields"]["assignee"]["name"].downcase
-              if assignee != $opts[:username].downcase
-                omnifocus_document.delete task
+              reporter = data['fields']['reporter']['name'].downcase
+              if reporter != $opts[:username].downcase
+                # Check to see if the Jira ticket has been unassigned or assigned to someone else, if so delete it.
+                # It will be re-created if it is assigned back to you.
+                if ! data['fields']['assignee']
+                  omnifocus_document.delete task
+                  puts 'Deleted task ' + jira_id
+                else
+                  assignee = data['fields']['assignee']['name'].downcase
+                  if assignee != $opts[:username].downcase
+                    omnifocus_document.delete task
+                    puts 'Deleted task ' + jira_id
+                  end
+                end
               end
             end
         else
