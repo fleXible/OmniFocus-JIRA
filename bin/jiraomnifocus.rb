@@ -197,8 +197,10 @@ def mark_resolved_jira_tickets_as_complete_in_omnifocus (omnifocus_document)
   ctx.tasks.get.find.each do |task|
     if !task.completed.get && task.note.get.match($opts[:hostname])
       # try to parse out jira id
+      #task_name= task.name.get
+      #jira_id=task_name.split(':').first
       full_url= task.note.get
-      jira_id=full_url.sub($opts[:hostname]+"/browse/","")
+      jira_id=full_url.split(/\\n/).first.sub($opts[:hostname]+'/browse/','')
       # check status of the jira
       uri = URI($opts[:hostname] + '/rest/api/2/issue/' + jira_id)
 
