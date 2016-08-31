@@ -101,7 +101,7 @@ def get_issues
     response = http.request request
     # If the response was good, then grab the data
     if response.code =~ /20[0-9]{1}/
-        puts 'Connected successfully to ' + uri.hostname + ' for grabbing issue data'
+        puts 'Connected successfully to ' + uri.hostname + ' for grabbing issue data with uri ' + uri.to_s
         data = JSON.parse(response.body)
         data['issues'].each do |item|
           jira_id = item['key']
@@ -196,6 +196,7 @@ def mark_resolved_jira_tickets_as_complete_in_omnifocus (omnifocus_document)
   ctx = omnifocus_document.flattened_projects[$opts[:project]]
   ctx.tasks.get.find.each do |task|
     if !task.completed.get && jira_id = task.note.get.match($opts[:hostname]+'/browse/(.+)\n*')[1]
+      puts 'Evaluating task '+task.name.get()
       # check status of the jira
       uri = URI($opts[:hostname] + '/rest/api/2/issue/' + jira_id)
 
@@ -224,19 +225,20 @@ def mark_resolved_jira_tickets_as_complete_in_omnifocus (omnifocus_document)
             # Check if Jira ticket has been created by current user, then keep it for monitoring.
             # If not created by us, do further checking
             if ! data['fields']['reporter']
-              omnifocus_document.delete task
+              #omnifocus_document.delete task
+              puts 'Deleted task ' + jira_id
             else
               reporter = data['fields']['reporter']['name'].downcase
               if reporter != $opts[:username].downcase
                 # Check to see if the Jira ticket has been unassigned or assigned to someone else, if so delete it.
                 # It will be re-created if it is assigned back to you.
                 if ! data['fields']['assignee']
-                  omnifocus_document.delete task
+                  #omnifocus_document.delete task
                   puts 'Deleted task ' + jira_id
                 else
                   assignee = data['fields']['assignee']['name'].downcase
                   if assignee != $opts[:username].downcase
-                    omnifocus_document.delete task
+                    #omnifocus_document.delete task
                     puts 'Deleted task ' + jira_id
                   end
                 end
