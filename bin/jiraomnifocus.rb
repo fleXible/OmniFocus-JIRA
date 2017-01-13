@@ -18,6 +18,7 @@ def get_opts
 jira:
   hostname: 'http://please-configure-me-in-jofsync.yaml.atlassian.net'
   keychain: false
+  auth_method: 'basic_auth'
   username: ''
   password: ''
   filter:   'resolution = Unresolved and issue in watchedissues()'
@@ -43,6 +44,7 @@ KNOWN ISSUES:
 EOS
   version 'jofsync 1.1.0'
   opt :usekeychain,'Use Keychain for Jira',:type => :boolean,  :short => 'k', :required => false,   :default => config["jira"]["keychain"]
+  opt :auth_method, 'Auth-Method',        :type => :string,   :short => 'a', :required => false,   :default => config["jira"]["auth_method"]
   opt :username,  'Jira Username',        :type => :string,   :short => 'u', :required => false,   :default => config["jira"]["username"]
   opt :password,  'Jira Password',        :type => :string,   :short => 'p', :required => false,   :default => config["jira"]["password"]
   opt :hostname,  'Jira Server Hostname', :type => :string,   :short => 'h', :required => false,   :default => config["jira"]["hostname"]
@@ -72,13 +74,34 @@ def get_issues
     end
   end
 
+  if $opts[:auth_method] == 'cookie'
+    auth_uri = URI($opts[:hostname] + '/rest/auth/1/session')
+    Net::HTTP.start(auth_uri.hostname, auth_uri.port, :use_ssl => auth_uri.scheme == 'https') do |http|
+      request = Net::HTTP::Post.new(auth_uri, initheader = {'Content-Type' =>'application/json'})
+      request.body = '{ "username": "' + $opts[:username] + '", "password": "' + $opts[:password] + '" }'
+      response = http.request request
+      # If the response was good, then grab the data
+      if response.code =~ /20[0-9]{1}/
+        puts 'Connected successfully to ' + uri.hostname + ' for Cookie-Auth'
+        $session = JSON.parse(response.body)
+      else
+        raise StandardError, 'Unsuccessful Cookie-Auth HTTP response code ' + response.code + ' from ' + uri.hostname
+      end
+    end
+  end
+
   Net::HTTP.start(uri.hostname, uri.port, :use_ssl => uri.scheme == 'https') do |http|
     request = Net::HTTP::Get.new(uri)
-    request.basic_auth $opts[:username], $opts[:password]
+    if $session['session']
+      cookie = CGI::Cookie.new($session['session']['name'], $session['session']['value'])
+      request['Cookie'] = cookie.to_s
+    else
+      request.basic_auth $opts[:username], $opts[:password]
+    end
     response = http.request request
     # If the response was good, then grab the data
     if response.code =~ /20[0-9]{1}/
-        puts "Connected successfully to " + uri.hostname + " for grabbing issue data with uri " + uri.to_s
+        puts 'Connected successfully to ' + uri.hostname + ' for grabbing issue data with uri ' + uri.to_s
         data = JSON.parse(response.body)
         data['issues'].each do |item|
           jira_id = item['key']
@@ -153,33 +176,39 @@ def add_jira_tickets_to_omnifocus (omnifocus_document)
     # Build properties for the Task
     @props = {}
     @props['name'] = task_name
-    @props['project'] = $opts[:project]
-    @props['context'] = $opts[:context]
+    @props['project'] = $opts[:project] unless $opts[:project].nil?
+    @props['context'] = $opts[:context] unless $opts[:context].nil?
     @props['note'] = task_notes
     @props['flagged'] = $opts[:flag]
-    unless ticket['fields']['duedate'].nil?
-      @props['due_date'] = Date.parse(ticket['fields']['duedate'])
-    end
+    @props['due_date'] = Date.parse(ticket['fields']['duedate']) unless ticket['fields']['duedate'].nil?
     @props['creation_date'] = Date.parse(ticket['fields']['created'])
-    unless ticket['fields']['updated'].nil?
-      @props['modification_date'] = Date.parse(ticket['fields']['updated'])
-    end
+    @props['modification_date'] = Date.parse(ticket['fields']['updated']) unless ticket['fields']['updated'].nil?
     add_task(omnifocus_document, @props)
   end
 end
 
 def mark_resolved_jira_tickets_as_complete_in_omnifocus (omnifocus_document)
   # get tasks from the project
-  ctx = omnifocus_document.flattened_projects[$opts[:project]]
-  ctx.tasks.get.find.each do |task|
-    if !task.completed.get && jira_id = task.note.get.match($opts[:hostname]+'/browse/(.+)\n*')[1]
+  #ctx = omnifocus_document.flattened_projects[$opts[:project]]
+  #ctx.tasks.get.find.each do |task|
+
+  # loop over all tasks
+  omnifocus_document.flattened_tasks.get.each do |task|
+    #puts 'Looping through task '+task.name.get()
+    if !task.completed.get && task.note.get.length() > 0 && matches = task.note.get.match($opts[:hostname]+'/browse/(.+)\n*')
       puts 'Evaluating task '+task.name.get()
+      jira_id = matches.captures.first()
       # check status of the jira
       uri = URI($opts[:hostname] + '/rest/api/2/issue/' + jira_id)
 
       Net::HTTP.start(uri.hostname, uri.port, :use_ssl => uri.scheme == 'https') do |http|
         request = Net::HTTP::Get.new(uri)
-        request.basic_auth $opts[:username], $opts[:password]
+        if $session['session']
+          cookie = CGI::Cookie.new($session['session']['name'], $session['session']['value'])
+          request['Cookie'] = cookie.to_s
+        else
+          request.basic_auth $opts[:username], $opts[:password]
+        end
         response = http.request request
 
         if response.code =~ /20[0-9]{1}/
