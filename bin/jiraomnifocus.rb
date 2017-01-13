@@ -176,27 +176,28 @@ def add_jira_tickets_to_omnifocus (omnifocus_document)
     # Build properties for the Task
     @props = {}
     @props['name'] = task_name
-    @props['project'] = $opts[:project]
-    @props['context'] = $opts[:context]
+    @props['project'] = $opts[:project] unless $opts[:project].nil?
+    @props['context'] = $opts[:context] unless $opts[:context].nil?
     @props['note'] = task_notes
     @props['flagged'] = $opts[:flag]
-    unless ticket['fields']['duedate'].nil?
-      @props['due_date'] = Date.parse(ticket['fields']['duedate'])
-    end
+    @props['due_date'] = Date.parse(ticket['fields']['duedate']) unless ticket['fields']['duedate'].nil?
     @props['creation_date'] = Date.parse(ticket['fields']['created'])
-    unless ticket['fields']['updated'].nil?
-      @props['modification_date'] = Date.parse(ticket['fields']['updated'])
-    end
+    @props['modification_date'] = Date.parse(ticket['fields']['updated']) unless ticket['fields']['updated'].nil?
     add_task(omnifocus_document, @props)
   end
 end
 
 def mark_resolved_jira_tickets_as_complete_in_omnifocus (omnifocus_document)
   # get tasks from the project
-  ctx = omnifocus_document.flattened_projects[$opts[:project]]
-  ctx.tasks.get.find.each do |task|
-    if !task.completed.get && jira_id = task.note.get.match($opts[:hostname]+'/browse/(.+)\n*')[1]
+  #ctx = omnifocus_document.flattened_projects[$opts[:project]]
+  #ctx.tasks.get.find.each do |task|
+
+  # loop over all tasks
+  omnifocus_document.flattened_tasks.get.each do |task|
+    #puts 'Looping through task '+task.name.get()
+    if !task.completed.get && task.note.get.length() > 0 && matches = task.note.get.match($opts[:hostname]+'/browse/(.+)\n*')
       puts 'Evaluating task '+task.name.get()
+      jira_id = matches.captures.first()
       # check status of the jira
       uri = URI($opts[:hostname] + '/rest/api/2/issue/' + jira_id)
 
@@ -225,22 +226,18 @@ def mark_resolved_jira_tickets_as_complete_in_omnifocus (omnifocus_document)
             # Check if Jira ticket has been created by current user, then keep it for monitoring.
             # If not created by us, do further checking
             if ! data['fields']['reporter']
-              #omnifocus_document.delete task
+              omnifocus_document.delete task
               puts 'Deleted task ' + jira_id
             else
-              reporter = data['fields']['reporter']['name'].downcase
-              if reporter != $opts[:username].downcase
+              if data['fields']['reporter']['name'].downcase != $opts[:username].downcase
                 # Check to see if the Jira ticket has been unassigned or assigned to someone else, if so delete it.
                 # It will be re-created if it is assigned back to you.
                 if ! data['fields']['assignee']
-                  #omnifocus_document.delete task
+                  omnifocus_document.delete task
                   puts 'Deleted task ' + jira_id
-                else
-                  assignee = data['fields']['assignee']['name'].downcase
-                  if assignee != $opts[:username].downcase
-                    #omnifocus_document.delete task
-                    puts 'Deleted task ' + jira_id
-                  end
+                elsif data['fields']['assignee']['name'].downcase != $opts[:username].downcase
+                  omnifocus_document.delete task
+                  puts 'Deleted task ' + jira_id
                 end
               end
             end
