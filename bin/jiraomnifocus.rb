@@ -74,7 +74,9 @@ def get_issues
 			$opts[:username] = keychain_item.account
 			$opts[:password] = keychain_item.password
 		rescue Keychain::Error
+			# Use terminal-notifier to notify the user of the bad response--useful when running this script from a LaunchAgent
 			error_message = "Password not found in keychain; add it using 'security add-internet-password -a <username> -s #{host} -w <password>'"
+			TerminalNotifier.notify(error_message, :title => "JIRA OmniFocus Sync", :subtitle => host, :sound => 'default')
 			raise StandardError, error_message
 		end
 	end
@@ -91,7 +93,10 @@ def get_issues
 				puts 'Connected successfully to ' + uri.hostname + ' using Cookie-Auth'
 				$session = JSON.parse(response.body)
 			else
-				raise StandardError, 'Unsuccessful Cookie-Auth: HTTP response code ' + response.code + ' from ' + uri.hostname
+				# Use terminal-notifier to notify the user of the bad response--useful when running this script from a LaunchAgent
+				error_message = 'Failed Cookie-Auth: HTTP response code ' + response.code
+				TerminalNotifier.notify(error_message, :title => "JIRA OmniFocus Sync", :subtitle => uri.hostname, :sound => 'default')
+				raise StandardError, error_message
 			end
 		end
 	end
@@ -115,9 +120,9 @@ def get_issues
 			end
 		else
 			# Use terminal-notifier to notify the user of the bad response--useful when running this script from a LaunchAgent
-			notify_message = "Response code: " + response.code
-			TerminalNotifier.notify(notify_message, :title => "JIRA OmniFocus Sync", :subtitle => uri.hostname, :sound => 'default')
-			raise StandardError, "Unsuccessful HTTP response code " + response.code + " from " + uri.hostname
+			error_message = "Failed retrieving issues: HTTP Response code " + response.code
+			TerminalNotifier.notify(error_message, :title => "JIRA OmniFocus Sync", :subtitle => uri.hostname, :sound => 'default')
+			raise StandardError, error_message + " from " + uri.hostname
 		end
 	end
 	return jira_issues
@@ -197,65 +202,57 @@ def add_jira_tickets_to_omnifocus (omnifocus_document)
 end
 
 def mark_resolved_jira_tickets_as_complete_in_omnifocus (omnifocus_document)
-  # get tasks from the project
-  #ctx = omnifocus_document.flattened_projects[$opts[:project]]
-  #ctx.tasks.get.find.each do |task|
+	# get tasks from the project
+	ctx = omnifocus_document.flattened_contexts[$opts[:context]]
+	ctx.tasks.get.find.each do |task|
+		if !task.completed.get && task.note.get.match($opts[:hostname])
+			# try to parse out jira id
+			full_url= task.note.get.lines.first.chomp
+			jira_id=full_url.sub($opts[:hostname]+"/browse/","")
+			# check status of the jira
+			uri = URI($opts[:hostname] + '/rest/api/2/issue/' + jira_id)
 
-  # loop over all tasks
-  omnifocus_document.flattened_tasks.get.each do |task|
-    #puts 'Looping through task '+task.name.get()
-    if !task.completed.get && task.note.get.length() > 0 && matches = task.note.get.match($opts[:hostname]+'/browse/(.+)\n*')
-      puts 'Evaluating task '+task.name.get()
-      jira_id = matches.captures.first()
-      # check status of the jira
-      uri = URI($opts[:hostname] + '/rest/api/2/issue/' + jira_id)
+			Net::HTTP.start(uri.hostname, uri.port, :use_ssl => uri.scheme == 'https') do |http|
+				request = Net::HTTP::Get.new(uri)
+				if $session['session']
+					cookie = CGI::Cookie.new($session['session']['name'], $session['session']['value'])
+					request['Cookie'] = cookie.to_s
+				else
+					request.basic_auth $opts[:username], $opts[:password]
+				end
+				response = http.request request
 
-      Net::HTTP.start(uri.hostname, uri.port, :use_ssl => uri.scheme == 'https') do |http|
-        request = Net::HTTP::Get.new(uri)
-        if $session['session']
-          cookie = CGI::Cookie.new($session['session']['name'], $session['session']['value'])
-          request['Cookie'] = cookie.to_s
-        else
-          request.basic_auth $opts[:username], $opts[:password]
-        end
-        response = http.request request
-
-        if response.code =~ /20[0-9]{1}/
-            data = JSON.parse(response.body)
-            # Check to see if the Jira ticket has been resolved, if so mark it as complete.
-            resolution = data['fields']['resolution']
-            if resolution != nil
-              # if resolved, mark it as complete in OmniFocus
-              unless task.completed.get
-                task.completed.set(true)
-                puts 'Marked task completed ' + jira_id
-                next
-              end
-            end
-            # Check if Jira ticket has been created by current user, then keep it for monitoring.
-            # If not created by us, do further checking
-            if ! data['fields']['reporter']
-              omnifocus_document.delete task
-              puts 'Deleted task ' + jira_id
-            else
-              if data['fields']['reporter']['name'].downcase != $opts[:username].downcase
-                # Check to see if the Jira ticket has been unassigned or assigned to someone else, if so delete it.
-                # It will be re-created if it is assigned back to you.
-                if ! data['fields']['assignee']
-                  omnifocus_document.delete task
-                  puts 'Deleted task ' + jira_id
-                elsif data['fields']['assignee']['name'].downcase != $opts[:username].downcase
-                  omnifocus_document.delete task
-                  puts 'Deleted task ' + jira_id
-                end
-              end
-            end
-        else
-         raise StandardError, 'Unsuccessful response code ' + response.code + ' for issue ' + issue
-        end
-      end
-    end
-  end
+				if response.code =~ /20[0-9]{1}/
+					data = JSON.parse(response.body)
+					# Check to see if the Jira ticket has been resolved, if so mark it as complete.
+					resolution = data["fields"]["resolution"]
+					if resolution != nil
+						# if resolved, mark it as complete in OmniFocus
+						unless task.completed.get
+							task.completed.set(true)
+							puts "Marked task completed " + jira_id
+							next
+						end
+					end
+					# Check to see if the Jira ticket has been unassigned or assigned to someone else, if so delete it.
+					# It will be re-created if it is assigned back to you.
+					if ! data["fields"]["assignee"]
+						omnifocus_document.delete task
+					else
+						assignee = data["fields"]["assignee"]["name"].downcase
+						if assignee != $opts[:username].downcase
+							omnifocus_document.delete task
+						end
+					end
+				else
+					# Use terminal-notifier to notify the user of the bad response--useful when running this script from a LaunchAgent
+					error_message = 'Failed request: HTTP response code ' + response.code + ' for issue ' + issue
+					TerminalNotifier.notify(error_message, :title => "JIRA OmniFocus Sync", :subtitle => uri.hostname, :sound => 'default')
+					raise StandardError, error_message
+				end
+			end
+		end
+	end
 end
 
 def app_is_running(app_name)
@@ -267,9 +264,12 @@ def get_omnifocus_document
 end
 
 def check_options()
-  if $opts[:hostname] == 'http://please-configure-me-in-jofsync.yaml.atlassian.net'
-    raise StandardError, 'The hostname is not set. Did you create ~/.jofsync.yaml?'
-  end
+	if $opts[:hostname] == 'http://please-configure-me-in-jofsync.yaml.atlassian.net'
+		# Use terminal-notifier to notify the user of the bad response--useful when running this script from a LaunchAgent
+		error_message = 'The hostname is not set. Did you create ~/.jofsync.yaml?'
+		TerminalNotifier.notify(error_message, :title => "JIRA OmniFocus Sync", :subtitle => '', :sound => 'default')
+		raise StandardError, error_message
+	end
 end
 
 def main ()
