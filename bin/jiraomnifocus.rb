@@ -48,7 +48,7 @@ def get_opts
 			---
 		EOS
 		version 'jofsync 1.1.0'
-		opt :usekeychain,'Use Keychain for Jira',:type => :boolean,  :short => 'k', :required => false,   :default => config["jira"]["keychain"]
+		opt :use_keychain,'Use Keychain for Jira',:type => :boolean,:short => 'k', :required => false,   :default => config["jira"]["keychain"]
 		opt :auth_method, 'Auth-Method',        :type => :string,   :short => 'a', :required => false,   :default => config["jira"]["auth_method"]
 		opt :username,  'Jira Username',        :type => :string,   :short => 'u', :required => false,   :default => config["jira"]["username"]
 		opt :password,  'Jira Password',        :type => :string,   :short => 'p', :required => false,   :default => config["jira"]["password"]
@@ -57,9 +57,9 @@ def get_opts
 		opt :context,   'OF Default Context',   :type => :string,   :short => 'c', :required => false,   :default => config["omnifocus"]["context"]
 		opt :project,   'OF Default Project',   :type => :string,   :short => 'r', :required => false,   :default => config["omnifocus"]["project"]
 		opt :flag,      'Flag tasks in OF',     :type => :boolean,  :short => 'f', :required => false,   :default => config["omnifocus"]["flag"]
-		opt :folder,	'OF Default Folder',	:type => :string,	:short => 'o', :required => false,	 :default => config["omnifocus"]["folder"] 
-		opt :inbox,     'Create inbox tasks',	:type => :boolean,	:short => 'i', :required => false,	 :default => config["omnifocus"]["inbox"]
-		opt :newproj,	'Create as projects',	:type => :boolean,	:short => 'n', :required => false,	 :default => config["omnifocus"]["newproj"]
+		opt :folder,    'OF Default Folder',    :type => :string,   :short => 'o', :required => false,   :default => config["omnifocus"]["folder"]
+		opt :inbox,     'Create inbox tasks',   :type => :boolean,  :short => 'i', :required => false,   :default => config["omnifocus"]["inbox"]
+		opt :newproj,   'Create as projects',   :type => :boolean,  :short => 'n', :required => false,   :default => config["omnifocus"]["newproj"]
 		opt :quiet,     'Disable output',       :type => :boolean,  :short => 'q',                       :default => true
 	end
 end
@@ -68,20 +68,24 @@ end
 def get_issues
 	puts "JOFSYNC.get_issues: starting method..." if $DEBUG
 	jira_issues = Hash.new
+
 	# This is the REST URL that will be hit.  Change the jql query if you want to adjust the query used here
 	uri = URI($opts[:hostname] + '/rest/api/2/search?jql=' + URI::encode($opts[:filter]))
+
 	puts "JOFSYNC.get_issues: about to hit URL: " + uri.to_s if $DEBUG
-	if $opts[:usekeychain]
+	if $opts[:use_keychain]
 		puts "JOFSYNC.get_issues: using Keychain for auth" if $DEBUG
-		keychainUri = URI($opts[:hostname])
-		host = keychainUri.host
-		puts "JOFSYNC.get_issues: looking for first Keychain entry for host: " + host if $DEBUG
-		if keychainitem = Keychain.internet_passwords.where(:server => host).first
-			$opts[:username] = keychainitem.account
-			$opts[:password] = keychainitem.password
+		keychain_uri = URI($opts[:hostname])
+		host = keychain_uri.host
+		begin
+			puts "JOFSYNC.get_issues: looking for first Keychain entry for host: " + host if $DEBUG
+			keychain_item = Keychain.internet_passwords.where(:server => host).first
+			$opts[:username] = keychain_item.account
+			$opts[:password] = keychain_item.password
 			puts "JOFSYNC.get_issues: username and password loaded from Keychain" if $DEBUG
-		else
-			raise "Password for #{host} not found in keychain; add it using 'security add-internet-password -a <username> -s #{host} -w <password>'"
+		rescue Keychain::Error
+			error_message = "Password not found in keychain; add it using 'security add-internet-password -a <username> -s #{host} -w <password>'"
+			raise StandardError, error_message
 		end
 	end
 
@@ -91,8 +95,8 @@ def get_issues
 		Net::HTTP.start(auth_uri.hostname, auth_uri.port, :use_ssl => auth_uri.scheme == 'https') do |http|
 			request = Net::HTTP::Post.new(auth_uri, initheader = {'Content-Type' =>'application/json'})
 			request.body = '{ "username": "' + $opts[:username] + '", "password": "' + $opts[:password] + '" }'
-			response = http.request request
-			# If the response was good, then grab the data
+			response = http.request(request)
+
 			if response.code =~ /20[0-9]{1}/
 				puts 'Connected successfully to ' + uri.hostname + ' using Cookie-Auth'
 				$session = JSON.parse(response.body)
