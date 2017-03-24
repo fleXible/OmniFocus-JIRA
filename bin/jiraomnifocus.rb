@@ -74,7 +74,9 @@ def get_issues
 			$opts[:username] = keychain_item.account
 			$opts[:password] = keychain_item.password
 		rescue Keychain::Error
+			# Use terminal-notifier to notify the user of the bad response--useful when running this script from a LaunchAgent
 			error_message = "Password not found in keychain; add it using 'security add-internet-password -a <username> -s #{host} -w <password>'"
+			TerminalNotifier.notify(error_message, :title => "JIRA OmniFocus Sync", :subtitle => host, :sound => 'default')
 			raise StandardError, error_message
 		end
 	end
@@ -115,9 +117,9 @@ def get_issues
 			end
 		else
 			# Use terminal-notifier to notify the user of the bad response--useful when running this script from a LaunchAgent
-			notify_message = "Response code: " + response.code
-			TerminalNotifier.notify(notify_message, :title => "JIRA OmniFocus Sync", :subtitle => uri.hostname, :sound => 'default')
-			raise StandardError, "Unsuccessful HTTP response code " + response.code + " from " + uri.hostname
+			error_message = "Failed retrieving issues: HTTP Response code " + response.code
+			TerminalNotifier.notify(error_message, :title => "JIRA OmniFocus Sync", :subtitle => uri.hostname, :sound => 'default')
+			raise StandardError, error_message + " from " + uri.hostname
 		end
 	end
 	return jira_issues
@@ -159,10 +161,22 @@ def add_task(omnifocus_document, new_task_properties)
   # You can uncomment this line and comment the one below if you want the tasks to end up in your Inbox instead of a specific Project
   # new_task = omnifocus_document.make(:new => :inbox_task, :with_properties => tprops)
 
-  # Make a new Task in the Project
-  proj.make(:new => :task, :with_properties => tprops)
+  # You can uncomment this line and comment the one below if you want JIRA sub-tasks to be created as OmniFocus sub-tasks as well
+  unless new_task_properties['parent'].nil?
+    # get reference to parent task, must already be created in OmniFocus
+    parent_name = "#{new_task_properties['parent']['key']}: #{new_task_properties['parent']['fields']['summary']}"
+    parent = omnifocus_document.flattened_tasks.get.find { |t| t.name.get.force_encoding('UTF-8') == parent_name }
+    # Remove the parent property from the new Task properties
+    tprops.delete(:parent)
+    # Create new Task as sub-task of retrieved parent
+    parent.make(:new => :task, :with_properties => tprops)
+    puts "Created task \"#{tprops[:name]}\" as sub-task of \"#{parent_name}\""
+  else
+    # Make a new Task in the Project
+    proj.make(:new => :task, :with_properties => tprops)
+    puts "Created task \"#{tprops[:name]}\""
+  end
 
-  puts "Created task " + tprops[:name]
   return true
 end
 
@@ -187,11 +201,15 @@ def add_jira_tickets_to_omnifocus (omnifocus_document)
     @props['name'] = task_name
     @props['project'] = $opts[:project] unless $opts[:project].nil?
     @props['context'] = $opts[:context] unless $opts[:context].nil?
-    @props['note'] = task_notes
+    @props['note'] = ticket['fields']['description'].nil? ? task_notes : task_notes + '\\n\\n' + ticket['fields']['description']
+    #@props['note'] = task_notes + '\n\n' + ticket['fields']['description']
     @props['flagged'] = $opts[:flag]
     @props['due_date'] = Date.parse(ticket['fields']['duedate']) unless ticket['fields']['duedate'].nil?
     @props['creation_date'] = Date.parse(ticket['fields']['created'])
     @props['modification_date'] = Date.parse(ticket['fields']['updated']) unless ticket['fields']['updated'].nil?
+    unless ticket['fields']['parent'].nil?
+      @props['parent'] = ticket['fields']['parent']
+    end
     add_task(omnifocus_document, @props)
   end
 end
@@ -255,7 +273,10 @@ def mark_resolved_jira_tickets_as_complete_in_omnifocus (omnifocus_document)
               end
             end
         else
-         raise StandardError, 'Unsuccessful response code ' + response.code + ' for issue ' + issue
+					# Use terminal-notifier to notify the user of the bad response--useful when running this script from a LaunchAgent
+					error_message = 'Failed request: HTTP response code ' + response.code + ' for issue ' + issue
+					TerminalNotifier.notify(error_message, :title => "JIRA OmniFocus Sync", :subtitle => uri.hostname, :sound => 'default')
+					raise StandardError, error_message
         end
       end
     end
@@ -272,7 +293,10 @@ end
 
 def check_options()
   if $opts[:hostname] == 'http://please-configure-me-in-jofsync.yaml.atlassian.net'
-    raise StandardError, 'The hostname is not set. Did you create ~/.jofsync.yaml?'
+		# Use terminal-notifier to notify the user of the bad response--useful when running this script from a LaunchAgent
+		error_message = 'The hostname is not set. Did you create ~/.jofsync.yaml?'
+		TerminalNotifier.notify(error_message, :title => "JIRA OmniFocus Sync", :subtitle => '', :sound => 'default')
+		raise StandardError, error_message
   end
 end
 
