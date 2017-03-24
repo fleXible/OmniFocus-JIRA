@@ -10,9 +10,9 @@ require 'keychain'
 require 'pathname'
 
 def get_opts
-  if  File.file?(ENV['HOME']+'/.jofsync.yaml')
-    config = YAML.load_file(ENV['HOME']+'/.jofsync.yaml')
-  else config = YAML.load <<-EOS
+	if File.file?(ENV['HOME']+'/.jofsync.yaml')
+		config = YAML.load_file(ENV['HOME']+'/.jofsync.yaml')
+	else config = YAML.load <<-EOS
 #YAML CONFIG EXAMPLE
 ---
 jira:
@@ -27,11 +27,11 @@ omnifocus:
   project:  'Jira'
   flag: true
 EOS
-  end
+	end
 
-  return Trollop::options do
-    banner ''
-    banner <<-EOS
+	Trollop::options do
+		banner ''
+		banner <<-EOS
 Jira OmniFocus Sync Tool
 
 Usage:
@@ -43,75 +43,84 @@ KNOWN ISSUES:
 ---
 EOS
   version 'jofsync 1.1.0'
-  opt :usekeychain,'Use Keychain for Jira',:type => :boolean,  :short => 'k', :required => false,   :default => config["jira"]["keychain"]
-  opt :auth_method, 'Auth-Method',        :type => :string,   :short => 'a', :required => false,   :default => config["jira"]["auth_method"]
-  opt :username,  'Jira Username',        :type => :string,   :short => 'u', :required => false,   :default => config["jira"]["username"]
-  opt :password,  'Jira Password',        :type => :string,   :short => 'p', :required => false,   :default => config["jira"]["password"]
-  opt :hostname,  'Jira Server Hostname', :type => :string,   :short => 'h', :required => false,   :default => config["jira"]["hostname"]
-  opt :filter,    'JQL Filter',           :type => :string,   :short => 'j', :required => false,   :default => config["jira"]["filter"]
-  opt :context,   'OF Default Context',   :type => :string,   :short => 'c', :required => false,   :default => config["omnifocus"]["context"]
-  opt :project,   'OF Default Project',   :type => :string,   :short => 'r', :required => false,   :default => config["omnifocus"]["project"]
-  opt :flag,      'Flag tasks in OF',     :type => :boolean,  :short => 'f', :required => false,   :default => config["omnifocus"]["flag"]
-  opt :quiet,     'Disable output',       :type => :boolean,   :short => 'q',                      :default => true
-end
+		opt :use_keychain,'Use Keychain for Jira',:type => :boolean,:short => 'k', :required => false,   :default => config["jira"]["keychain"]
+		opt :auth_method, 'Auth-Method',        :type => :string,   :short => 'a', :required => false,   :default => config["jira"]["auth_method"]
+		opt :username,  'Jira Username',        :type => :string,   :short => 'u', :required => false,   :default => config["jira"]["username"]
+		opt :password,  'Jira Password',        :type => :string,   :short => 'p', :required => false,   :default => config["jira"]["password"]
+		opt :hostname,  'Jira Server Hostname', :type => :string,   :short => 'h', :required => false,   :default => config["jira"]["hostname"]
+		opt :filter,    'JQL Filter',           :type => :string,   :short => 'j', :required => false,   :default => config["jira"]["filter"]
+		opt :context,   'OF Default Context',   :type => :string,   :short => 'c', :required => false,   :default => config["omnifocus"]["context"]
+		opt :project,   'OF Default Project',   :type => :string,   :short => 'r', :required => false,   :default => config["omnifocus"]["project"]
+		opt :flag,      'Flag tasks in OF',     :type => :boolean,  :short => 'f', :required => false,   :default => config["omnifocus"]["flag"]
+		opt :folder,    'OF Default Folder',    :type => :string,   :short => 'o', :required => false,   :default => config["omnifocus"]["folder"]
+		opt :inbox,     'Create inbox tasks',   :type => :boolean,  :short => 'i', :required => false,   :default => config["omnifocus"]["inbox"]
+		opt :newproj,   'Create as projects',   :type => :boolean,  :short => 'n', :required => false,   :default => config["omnifocus"]["newproj"]
+		opt :quiet,     'Disable output',       :type => :boolean,  :short => 'q',                       :default => true
+	end
 end
 
 # This method gets all issues that are assigned to your USERNAME and whos status isn't Closed or Resolved.  It returns a Hash where the key is the Jira Ticket Key and the value is the Jira Ticket Summary.
 def get_issues
-  jira_issues = Hash.new
+	jira_issues = Hash.new
 
-  # This is the REST URL that will be hit.  Change the jql query if you want to adjust the query used here
-  uri = URI($opts[:hostname] + '/rest/api/2/search?jql=' + URI::encode($opts[:filter]))
+	# This is the REST URL that will be hit.  Change the jql query if you want to adjust the query used here
+	uri = URI($opts[:hostname] + '/rest/api/2/search?jql=' + URI::encode($opts[:filter]))
 
-  if $opts[:usekeychain]
-    keychain_uri = URI($opts[:hostname])
-    host = keychain_uri.host
-    if keychainitem = Keychain.internet_passwords.where(:server => host).first
-    	$opts[:username] = keychainitem.account
-    	$opts[:password] = keychainitem.password
-    else
-    	raise "Password for #{host} not found in keychain; add it using 'security add-internet-password -a <username> -s #{host} -w <password>'"
-    end
-  end
+	if $opts[:use_keychain]
+		keychain_uri = URI($opts[:hostname])
+		host = keychain_uri.host
+		begin
+			keychain_item = Keychain.internet_passwords.where(:server => host).first
+			$opts[:username] = keychain_item.account
+			$opts[:password] = keychain_item.password
+		rescue Keychain::Error
+			error_message = "Password not found in keychain; add it using 'security add-internet-password -a <username> -s #{host} -w <password>'"
+			raise StandardError, error_message
+		end
+	end
 
-  if $opts[:auth_method] == 'cookie'
-    auth_uri = URI($opts[:hostname] + '/rest/auth/1/session')
-    Net::HTTP.start(auth_uri.hostname, auth_uri.port, :use_ssl => auth_uri.scheme == 'https') do |http|
-      request = Net::HTTP::Post.new(auth_uri, initheader = {'Content-Type' =>'application/json'})
-      request.body = '{ "username": "' + $opts[:username] + '", "password": "' + $opts[:password] + '" }'
-      response = http.request request
-      # If the response was good, then grab the data
-      if response.code =~ /20[0-9]{1}/
-        puts 'Connected successfully to ' + uri.hostname + ' for Cookie-Auth'
-        $session = JSON.parse(response.body)
-      else
-        raise StandardError, 'Unsuccessful Cookie-Auth HTTP response code ' + response.code + ' from ' + uri.hostname
-      end
-    end
-  end
+	if $opts[:auth_method] == 'cookie'
+		auth_uri = URI($opts[:hostname] + '/rest/auth/1/session')
+		Net::HTTP.start(auth_uri.hostname, auth_uri.port, :use_ssl => auth_uri.scheme == 'https') do |http|
+			request = Net::HTTP::Post.new(auth_uri)
+			request['Content-Type'] = 'application/json'
+			request.body = '{ "username": "' + $opts[:username] + '", "password": "' + $opts[:password] + '" }'
+			response = http.request(request)
+			# If the response was good, then grab the data
+			if response.code =~ /20[0-9]{1}/
+				puts 'Connected successfully to ' + uri.hostname + ' using Cookie-Auth'
+				$session = JSON.parse(response.body)
+			else
+				raise StandardError, 'Unsuccessful Cookie-Auth: HTTP response code ' + response.code + ' from ' + uri.hostname
+			end
+		end
+	end
 
-  Net::HTTP.start(uri.hostname, uri.port, :use_ssl => uri.scheme == 'https') do |http|
-    request = Net::HTTP::Get.new(uri)
-    if $session['session']
-      cookie = CGI::Cookie.new($session['session']['name'], $session['session']['value'])
-      request['Cookie'] = cookie.to_s
-    else
-      request.basic_auth $opts[:username], $opts[:password]
-    end
-    response = http.request request
-    # If the response was good, then grab the data
-    if response.code =~ /20[0-9]{1}/
-        puts 'Connected successfully to ' + uri.hostname + ' for grabbing issue data with uri ' + uri.to_s
-        data = JSON.parse(response.body)
-        data['issues'].each do |item|
-          jira_id = item['key']
-          jira_issues[jira_id] = item
-        end
-    else
-     raise StandardError, 'Unsuccessful HTTP response code ' + response.code + ' from ' + uri.hostname
-    end
-  end
-  return jira_issues
+	Net::HTTP.start(uri.hostname, uri.port, :use_ssl => uri.scheme == 'https') do |http|
+		request = Net::HTTP::Get.new(uri)
+		if $session['session']
+			cookie = CGI::Cookie.new($session['session']['name'], $session['session']['value'])
+			request['Cookie'] = cookie.to_s
+		else
+			request.basic_auth $opts[:username], $opts[:password]
+		end
+		response = http.request request
+		# If the response was good, then grab the data
+		if response.code =~ /20[0-9]{1}/
+			puts "Connected successfully to " + uri.hostname
+			data = JSON.parse(response.body)
+			data["issues"].each do |item|
+				jira_id = item["key"]
+				jira_issues[jira_id] = item
+			end
+		else
+			# Use terminal-notifier to notify the user of the bad response--useful when running this script from a LaunchAgent
+			notify_message = "Response code: " + response.code
+			TerminalNotifier.notify(notify_message, :title => "JIRA OmniFocus Sync", :subtitle => uri.hostname, :sound => 'default')
+			raise StandardError, "Unsuccessful HTTP response code " + response.code + " from " + uri.hostname
+		end
+	end
+	return jira_issues
 end
 
 # This method adds a new Task to OmniFocus based on the new_task_properties passed in
