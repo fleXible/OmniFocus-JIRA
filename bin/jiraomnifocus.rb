@@ -4,12 +4,10 @@ require 'bundler/setup'
 Bundler.require(:default)
 
 require 'cgi'
-require 'rb-scpt'
 require 'json'
-require 'yaml'
 require 'net/http'
-require 'keychain'
 require 'pathname'
+require 'yaml'
 
 def get_opts
 	if File.file?(ENV['HOME']+'/.jofsync.yaml')
