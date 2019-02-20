@@ -34,9 +34,9 @@ def get_opts
 		EOS
 	end
 
-	return Trollop::options do
-		banner ""
-		banner <<-EOS
+	Optimist::options do
+		version "jofsync 1.1.0"
+		banner <<~EOS
 			Jira OmniFocus Sync Tool
 			
 			Usage:
@@ -44,10 +44,7 @@ def get_opts
 			
 			KNOWN ISSUES:
 			    * With long names you must use an equal sign ( i.e. --hostname=test-target-1 )
-			
-			---
 		EOS
-		version 'jofsync 1.1.0'
 		opt :use_keychain,'Use Keychain for Jira',:type => :boolean,:short => 'k', :required => false,   :default => config["jira"]["keychain"]
 		opt :auth_method, 'Auth-Method',        :type => :string,   :short => 'a', :required => false,   :default => config["jira"]["auth_method"]
 		opt :username,  'Jira Username',        :type => :string,   :short => 'u', :required => false,   :default => config["jira"]["username"]
